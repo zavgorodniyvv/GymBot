@@ -67,7 +67,7 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 			b.api.Send(tgbotapi.NewMessage(chatID, "Текущая тренировка пуста. Пришли хотя бы одно число."))
 			return
 		}
-		s, err := storage.FinishWorkout(u)
+		s, err := b.storage.FinishWorkout(u)
 		if err != nil {
 			b.api.Send(tgbotapi.NewMessage(chatID, "Ошибка: "+err.Error()))
 			return

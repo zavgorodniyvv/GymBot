@@ -1,0 +1,16 @@
+# IDE files
+.idea/dataSources.xml
+.idea/data_source_mapping.xml
+
+# Build output
+/gymbot
+
+# Data directory
+/data/
+
+# Go modules
+/vendor/
+
+# Environment files
+.env
+.env.local
