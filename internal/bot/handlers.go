@@ -12,11 +12,12 @@ import (
 )
 
 type Bot struct {
-	api *tgbotapi.BotAPI
+	api     *tgbotapi.BotAPI
+	storage *storage.MongoStorage
 }
 
-func New(api *tgbotapi.BotAPI) *Bot {
-	return &Bot{api: api}
+func New(api *tgbotapi.BotAPI, st *storage.MongoStorage) *Bot {
+	return &Bot{api: api, storage: st}
 }
 
 func (b *Bot) Handle(update tgbotapi.Update) {
@@ -29,7 +30,7 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 	text := strings.TrimSpace(update.Message.Text)
 
 	// Загружаем/создаём данные пользователя
-	u, _ := storage.LoadUser(userID)
+	u, _ := b.storage.LoadUser(userID)
 
 	switch {
 	case strings.HasPrefix(text, "/start"):
@@ -45,14 +46,14 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 
 	case strings.HasPrefix(text, "/reset"):
 		u = storage.NewUser(userID)
-		_ = storage.SaveUser(u)
+		_ = b.storage.SaveUser(u)
 		b.api.Send(tgbotapi.NewMessage(chatID, "Данные сброшены."))
 		return
 
 	case strings.HasPrefix(text, "/plan"):
 		if len(u.LastPlan) == 0 {
 			u.LastPlan = planner.MakePlan(u)
-			_ = storage.SaveUser(u)
+			_ = b.storage.SaveUser(u)
 		}
 		b.api.Send(tgbotapi.NewMessage(chatID, planner.FormatPlan(u.LastPlan)))
 		return
@@ -80,7 +81,7 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 	// Пытаемся распарсить число повторений
 	if n, err := strconv.Atoi(text); err == nil && n > 0 {
 		u.CurrentWorkout = append(u.CurrentWorkout, n)
-		_ = storage.SaveUser(u)
+		_ = b.storage.SaveUser(u)
 		b.api.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf(
 			"Ок, записал подход: %d. Текущая тренировка: %v\nКогда закончишь — пришли /end",
 			n, u.CurrentWorkout)))
