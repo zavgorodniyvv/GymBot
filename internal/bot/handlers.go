@@ -72,7 +72,11 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 			b.api.Send(tgbotapi.NewMessage(chatID, "Ошибка: "+err.Error()))
 			return
 		}
-		resp := fmt.Sprintf("Тренировка сохранена!\nПодходы: %v\nЛучший подход: %d\nОбъём: %d\n\n%s",
+		// Генерируем новый план для следующей тренировки
+		u.LastPlan = planner.MakePlan(u)
+		_ = b.storage.SaveUser(u)
+
+		resp := fmt.Sprintf("Тренировка сохранена!\nПодходы: %v\nЛучший подход: %d\nОбъём: %d\n\nПлан на следующую тренировку:\n%s",
 			s.Sets, s.MaxSet, s.TotalReps, planner.FormatPlan(u.LastPlan))
 		b.api.Send(tgbotapi.NewMessage(chatID, resp))
 		return
