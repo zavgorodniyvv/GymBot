@@ -1,9 +1,12 @@
 package bot
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 
@@ -14,10 +17,12 @@ import (
 type Bot struct {
 	api     *tgbotapi.BotAPI
 	storage *storage.MongoStorage
+	mu      sync.Mutex
+	timers  map[int64]*restTimer
 }
 
 func New(api *tgbotapi.BotAPI, st *storage.MongoStorage) *Bot {
-	return &Bot{api: api, storage: st}
+	return &Bot{api: api, storage: st, timers: make(map[int64]*restTimer)}
 }
 
 func (b *Bot) Handle(update tgbotapi.Update) {
@@ -84,14 +89,87 @@ func (b *Bot) Handle(update tgbotapi.Update) {
 
 	// Пытаемся распарсить число повторений
 	if n, err := strconv.Atoi(text); err == nil && n > 0 {
+		const restSeconds = 120
 		u.CurrentWorkout = append(u.CurrentWorkout, n)
 		_ = b.storage.SaveUser(u)
 		b.api.Send(tgbotapi.NewMessage(chatID, fmt.Sprintf(
 			"Ок, записал подход: %d. Текущая тренировка: %v\nКогда закончишь — пришли /end",
 			n, u.CurrentWorkout)))
+
+		b.cancelTimer(chatID)
+
+		timerMsg := tgbotapi.NewMessage(chatID, fmt.Sprintf("Таймер отдыха: %d секунд", restSeconds))
+		sentTimerMsg, err := b.api.Send(timerMsg)
+		if err == nil {
+			b.launchRestTimer(chatID, sentTimerMsg.MessageID, restSeconds)
+		}
 		return
 	}
 
 	// Непонятный ввод
 	b.api.Send(tgbotapi.NewMessage(chatID, "Я понимаю команды (/plan, /stats, /end, /reset) и числа (повторы в подходе)."))
+}
+
+type restTimer struct {
+	cancel context.CancelFunc
+}
+
+func (b *Bot) launchRestTimer(chatID int64, messageID int, totalSeconds int) {
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := &restTimer{cancel: cancel}
+
+	b.mu.Lock()
+	if prev, ok := b.timers[chatID]; ok {
+		prev.cancel()
+	}
+	b.timers[chatID] = timer
+	b.mu.Unlock()
+
+	go b.runRestTimer(ctx, chatID, messageID, totalSeconds, timer)
+}
+
+func (b *Bot) runRestTimer(ctx context.Context, chatID int64, messageID int, totalSeconds int, timer *restTimer) {
+	defer b.clearTimer(chatID, timer)
+
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for remaining := totalSeconds - 1; remaining >= 0; remaining-- {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		var text string
+		if remaining == 0 {
+			text = "Отдых завершён! Можно переходить к следующему подходу."
+		} else {
+			text = fmt.Sprintf("Таймер отдыха: %d секунд", remaining)
+		}
+
+		edit := tgbotapi.NewEditMessageText(chatID, messageID, text)
+		if _, err := b.api.Send(edit); err != nil {
+			return
+		}
+	}
+}
+
+func (b *Bot) clearTimer(chatID int64, timer *restTimer) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if current, ok := b.timers[chatID]; ok && current == timer {
+		delete(b.timers, chatID)
+	}
+}
+
+func (b *Bot) cancelTimer(chatID int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if timer, ok := b.timers[chatID]; ok {
+		timer.cancel()
+		delete(b.timers, chatID)
+	}
 }
